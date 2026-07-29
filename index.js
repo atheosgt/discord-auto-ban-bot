@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 const express = require('express');
 
 // --- KEEP-ALIVE SERVER FOR RENDER ---
@@ -14,9 +14,8 @@ app.listen(port, () => {
   console.log(`Web server running on port ${port}`);
 });
 
-// --- GOOGLE GEMINI AI SETUP ---
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+// --- GROQ AI SETUP ---
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // --- DISCORD BOT SETUP ---
 const client = new Client({
@@ -109,7 +108,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // 2. AI CHAT LOGIC (When mentioned)
+  // 2. AI CHAT LOGIC (GROQ)
   if (message.mentions.has(client.user)) {
     try {
       const prompt = message.content.replace(`<@${client.user.id}>`, '').trim();
@@ -120,9 +119,15 @@ client.on('messageCreate', async (message) => {
 
       await message.channel.sendTyping();
 
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const replyText = response.text() || 'I could not generate a response.';
+      const chatCompletion = await groq.chat.completions.create({
+        messages: [
+          { role: 'system', content: 'You are a helpful Discord assistant.' },
+          { role: 'user', content: prompt }
+        ],
+        model: 'llama-3.3-70b-versatile',
+      });
+
+      const replyText = chatCompletion.choices[0]?.message?.content || 'I could not generate a response.';
       
       if (replyText.length > 2000) {
         await message.reply(replyText.substring(0, 1995) + '...');
@@ -130,7 +135,7 @@ client.on('messageCreate', async (message) => {
         await message.reply(replyText);
       }
     } catch (err) {
-      console.error('AI Error:', err);
+      console.error('Groq AI Error:', err);
       message.reply('An error occurred while processing your request.');
     }
   }
