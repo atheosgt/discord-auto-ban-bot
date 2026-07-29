@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const Groq = require('groq-sdk');
 const express = require('express');
 
@@ -30,67 +30,18 @@ const client = new Client({
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 
-// Role IDs to assign with /give command
+// Specific Role ID required to use !give command
+const ALLOWED_ROLE_ID = '1527451436357648414';
+
+// Role IDs to assign with !give command
 const ROLE_ID_1 = '1527450826698920026';
 const ROLE_ID_2 = '1527450854209224835';
 
-// Build the /give slash command
-const commands = [
-  new SlashCommandBuilder()
-    .setName('give')
-    .setDescription('Assign two specific roles to a user')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
-    .addUserOption(option => 
-      option.setName('target')
-        .setDescription('The user to receive the roles')
-        .setRequired(true)
-    )
-];
-
-// Register slash commands upon bot readiness
-client.on('clientReady', async () => {
+client.on('clientReady', () => {
   console.log(`Logged in as ${client.user.tag}`);
-
-  const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
-  try {
-    console.log('Registering application (/) commands...');
-    await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commands }
-    );
-    console.log('Successfully registered application (/) commands.');
-  } catch (error) {
-    console.error('Failed to register slash commands:', error);
-  }
 });
 
-// --- SLASH COMMAND INTERACTION HANDLER ---
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (interaction.commandName === 'give') {
-    const targetMember = interaction.options.getMember('target');
-
-    if (!targetMember) {
-      return interaction.reply({ content: 'User could not be found in this server.', flags: 64 });
-    }
-
-    try {
-      await targetMember.roles.add([ROLE_ID_1, ROLE_ID_2]);
-      await interaction.reply({ 
-        content: `Successfully granted both roles to ${targetMember.user.tag}!` 
-      });
-    } catch (err) {
-      console.error('Failed to assign roles:', err);
-      await interaction.reply({ 
-        content: 'Failed to assign roles. Please check my permissions and role hierarchy.', 
-        flags: 64 
-      });
-    }
-  }
-});
-
-// --- MESSAGE HANDLER (TRAP & AI) ---
+// --- MESSAGE HANDLER (TRAP, AI & !give COMMAND) ---
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -108,7 +59,30 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // 2. AI CHAT LOGIC (GROQ)
+  // 2. !give COMMAND LOGIC
+  if (message.content.startsWith('!give')) {
+    // Check if the user executing the command has the specific allowed role
+    if (!message.member.roles.cache.has(ALLOWED_ROLE_ID)) {
+      return message.reply('You do not have the required role to use this command.');
+    }
+
+    const targetMember = message.mentions.members.first();
+
+    if (!targetMember) {
+      return message.reply('Please mention a valid user. Example: `!give @User`');
+    }
+
+    try {
+      await targetMember.roles.add([ROLE_ID_1, ROLE_ID_2]);
+      await message.reply(`Successfully granted both roles to ${targetMember.user.tag}!`);
+    } catch (err) {
+      console.error('Failed to assign roles:', err);
+      await message.reply('Failed to assign roles. Please check my permissions and role hierarchy.');
+    }
+    return;
+  }
+
+  // 3. AI CHAT LOGIC (GROQ - When mentioned)
   if (message.mentions.has(client.user)) {
     try {
       const prompt = message.content.replace(`<@${client.user.id}>`, '').trim();
