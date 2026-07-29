@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const express = require('express');
 
 // --- KEEP-ALIVE SERVER FOR RENDER ---
@@ -15,7 +15,8 @@ app.listen(port, () => {
 });
 
 // --- GOOGLE GEMINI AI SETUP ---
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // --- DISCORD BOT SETUP ---
 const client = new Client({
@@ -119,12 +120,9 @@ client.on('messageCreate', async (message) => {
 
       await message.channel.sendTyping();
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: prompt,
-      });
-
-      const replyText = response.text || 'I could not generate a response.';
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const replyText = response.text() || 'I could not generate a response.';
       
       if (replyText.length > 2000) {
         await message.reply(replyText.substring(0, 1995) + '...');
