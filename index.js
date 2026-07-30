@@ -24,7 +24,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMembers, // Otomatik rol vermek için gerekli
     GatewayIntentBits.GuildVoiceStates // Ses kanalına katılmak için gerekli
   ]
 });
@@ -41,6 +41,9 @@ const ALLOWED_ROLE_ID = '1527451436357648414';
 // Role IDs to assign with !give command
 const ROLE_ID_1 = '1527450826698920026';
 const ROLE_ID_2 = '1527450854209224835';
+
+// Sunucuya yeni katılanlara verilecek Otomatik Rol ID'si
+const AUTO_ROLE_ID = '1377710611416354997';
 
 client.on('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
@@ -66,6 +69,16 @@ client.on('clientReady', async () => {
     }
   } catch (err) {
     console.error('Failed to join voice channel:', err);
+  }
+});
+
+// --- AUTO-ROLE ON MEMBER JOIN ---
+client.on('guildMemberAdd', async (member) => {
+  try {
+    await member.roles.add(AUTO_ROLE_ID);
+    console.log(`Auto-role assigned to ${member.user.tag}`);
+  } catch (err) {
+    console.error(`Failed to assign auto-role to ${member.user.tag}:`, err);
   }
 });
 
@@ -110,7 +123,6 @@ client.on('messageCreate', async (message) => {
   }
 
   // 3. AI CHAT LOGIC (GROQ - When mentioned)
-  // @everyone veya @here etiketlerini yoksayar
   if (message.mentions.has(client.user) && !message.mentions.everyone) {
     try {
       const prompt = message.content.replace(`<@${client.user.id}>`, '').trim();
