@@ -1,4 +1,5 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, ActivityType } = require('discord.js');
+const { joinVoiceChannel } = require('@discordjs/voice');
 const Groq = require('groq-sdk');
 const express = require('express');
 
@@ -23,12 +24,16 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates // Ses kanalına katılmak için gerekli
   ]
 });
 
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
+
+// Ses Kanalı ID
+const VOICE_CHANNEL_ID = '1527450083593814049';
 
 // Specific Role ID required to use !give command
 const ALLOWED_ROLE_ID = '1527451436357648414';
@@ -37,8 +42,31 @@ const ALLOWED_ROLE_ID = '1527451436357648414';
 const ROLE_ID_1 = '1527450826698920026';
 const ROLE_ID_2 = '1527450854209224835';
 
-client.on('clientReady', () => {
+client.on('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  // 1. DURUM AYARLAMA (Tag me to chat | AI)
+  client.user.setPresence({
+    activities: [{ name: 'Tag me to chat | AI', type: ActivityType.Custom }],
+    status: 'online',
+  });
+
+  // 2. SES KANALINA KATILMA (Mute & Deafen)
+  try {
+    const channel = await client.channels.fetch(VOICE_CHANNEL_ID);
+    if (channel && channel.isVoiceBased()) {
+      joinVoiceChannel({
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator,
+        selfMute: true,   // Kendini Mute'la
+        selfDeaf: true,   // Kendini Sağırlaştır
+      });
+      console.log(`Connected to voice channel: ${channel.name}`);
+    }
+  } catch (err) {
+    console.error('Failed to join voice channel:', err);
+  }
 });
 
 // --- MESSAGE HANDLER (TRAP, AI & !give COMMAND) ---
@@ -61,7 +89,6 @@ client.on('messageCreate', async (message) => {
 
   // 2. !give COMMAND LOGIC
   if (message.content.startsWith('!give')) {
-    // Check if the user executing the command has the specific allowed role
     if (!message.member.roles.cache.has(ALLOWED_ROLE_ID)) {
       return message.reply('You do not have the required role to use this command.');
     }
@@ -83,7 +110,8 @@ client.on('messageCreate', async (message) => {
   }
 
   // 3. AI CHAT LOGIC (GROQ - When mentioned)
-  if (message.mentions.has(client.user)) {
+  // @everyone veya @here etiketlerini yoksayar
+  if (message.mentions.has(client.user) && !message.mentions.everyone) {
     try {
       const prompt = message.content.replace(`<@${client.user.id}>`, '').trim();
       
