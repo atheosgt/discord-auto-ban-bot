@@ -24,37 +24,38 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers, // Otomatik rol vermek için gerekli
-    GatewayIntentBits.GuildVoiceStates // Ses kanalına katılmak için gerekli
+    GatewayIntentBits.GuildMembers, // Required to assign auto-roles
+    GatewayIntentBits.GuildVoiceStates // Required to join voice channels
   ]
 });
 
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 
-// Ses Kanalı ID
+// Voice Channel ID
 const VOICE_CHANNEL_ID = '1527450083593814049';
 
-// Specific Role ID required to use !give command
+// Specific Role ID required to use !give command and post links (Admin Role)
 const ALLOWED_ROLE_ID = '1527451436357648414';
+const ADMIN_ROLE_ID = '1527451436357648414';
 
 // Role IDs to assign with !give command
 const ROLE_ID_1 = '1527450826698920026';
 const ROLE_ID_2 = '1527450854209224835';
 
-// Sunucuya yeni katılanlara verilecek Otomatik Rol ID'si
+// Auto-Role ID for new members joining the server
 const AUTO_ROLE_ID = '1377710611416354997';
 
 client.on('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
-  // 1. DURUM AYARLAMA (Tag me to chat | AI)
+  // 1. SET PRESENCE (Tag me to chat | AI)
   client.user.setPresence({
     activities: [{ name: 'Tag me to chat | AI', type: ActivityType.Custom }],
     status: 'online',
   });
 
-  // 2. SES KANALINA KATILMA (Mute & Deafen)
+  // 2. JOIN VOICE CHANNEL (Mute & Deafen)
   try {
     const channel = await client.channels.fetch(VOICE_CHANNEL_ID);
     if (channel && channel.isVoiceBased()) {
@@ -62,8 +63,8 @@ client.on('clientReady', async () => {
         channelId: channel.id,
         guildId: channel.guild.id,
         adapterCreator: channel.guild.voiceAdapterCreator,
-        selfMute: true,   // Kendini Mute'la
-        selfDeaf: true,   // Kendini Sağırlaştır
+        selfMute: true,   // Mute self
+        selfDeaf: true,   // Deafen self
       });
       console.log(`Connected to voice channel: ${channel.name}`);
     }
@@ -82,9 +83,29 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
-// --- MESSAGE HANDLER (TRAP, AI & !give COMMAND) ---
+// --- MESSAGE HANDLER (ANTI-LINK, TRAP, AI & !give COMMAND) ---
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+  if (!message.guild) return; // Process server messages only
+
+  // 0. ANTI-LINK LOGIC (Delete links unless user has Admin role)
+  const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/[^\s]*)?)/gi;
+
+  if (urlRegex.test(message.content)) {
+    if (!message.member.roles.cache.has(ADMIN_ROLE_ID)) {
+      try {
+        if (message.deletable) {
+          await message.delete();
+          // Optional: Send a temporary warning message to the user
+          const warningMsg = await message.channel.send(`<@${message.author.id}>, posting links is not allowed on this server!`);
+          setTimeout(() => warningMsg.delete().catch(() => {}), 3000); // Delete warning after 3 seconds
+        }
+      } catch (err) {
+        console.error('Failed to delete message containing link:', err);
+      }
+      return; // Stop further execution if a link was deleted
+    }
+  }
 
   // 1. TRAP CHANNEL LOGIC
   if (message.channel.id === TARGET_CHANNEL_ID) {
