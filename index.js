@@ -46,14 +46,41 @@ const ROLE_ID_2 = '1527450854209224835';
 // Auto-Role ID for new members joining the server
 const AUTO_ROLE_ID = '1377710611416354997';
 
+// --- GROWTOPIA STATUS UPDATE FUNCTION ---
+async function updateBotStatus() {
+  try {
+    const response = await fetch('https://growtopiagame.com/detail');
+    const data = await response.json();
+    
+    // Parse the online user count to an integer
+    const onlineCount = parseInt(data.online_user, 10);
+    let statusText = '';
+
+    if (isNaN(onlineCount)) {
+      statusText = 'Fetching status...';
+    } else if (onlineCount < 1000) {
+      statusText = 'Game Down';
+    } else {
+      statusText = `${onlineCount} Online`;
+    }
+
+    // Update bot presence
+    client.user.setPresence({
+      activities: [{ name: statusText, type: ActivityType.Custom }],
+      status: 'online',
+    });
+    
+  } catch (err) {
+    console.error('Failed to fetch Growtopia status:', err);
+  }
+}
+
 client.on('clientReady', async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
-  // 1. SET PRESENCE (Tag me to chat | AI)
-  client.user.setPresence({
-    activities: [{ name: 'Tag me to chat | AI', type: ActivityType.Custom }],
-    status: 'online',
-  });
+  // 1. SET PRESENCE & START STATUS LOOP
+  updateBotStatus(); // Call once initially
+  setInterval(updateBotStatus, 60000); // Update status every 60 seconds
 
   // 2. JOIN VOICE CHANNEL (Mute & Deafen)
   try {
