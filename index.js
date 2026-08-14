@@ -5,25 +5,39 @@ const {
   Routes, 
   SlashCommandBuilder, 
   PermissionFlagsBits, 
-  EmbedBuilder 
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ActivityType,
+  ComponentType
 } = require('discord.js');
 const express = require('express');
 
+// --- OPTIONAL VOICE SUPPORT ---
+let joinVoiceChannel = null;
+try {
+  const voice = require('@discordjs/voice');
+  joinVoiceChannel = voice.joinVoiceChannel;
+} catch (e) {
+  // Voice package not available
+}
+
 // --- KEEP-ALIVE SERVER FOR RENDER / HOSTING ---
-//aaa
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-  res.send('Nebula Bot & AI System is active 24/7!');
+  res.send('Nebula Discord Bot & Proxy Sync System is active 24/7!');
 });
 
 app.listen(port, () => {
-  console.log(`Web server running on port ${port}`);
+  console.log(`[Web Server] Running on port ${port}`);
 });
 
 // --- CONFIGURATION ---
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
+const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID || process.env.VOICE_CHANNEL;
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -34,10 +48,28 @@ const NEBULA_OWNER_PASSWORD = process.env.NEBULA_OWNER_PASSWORD || 'nebula_owner
 const ROLE_ID_1 = '1527450826698920026';
 const ROLE_ID_2 = '1527450854209224835';
 
+// --- PRICE & EMOJI FORMATTER ---
+function formatNebulaPrice(priceInput) {
+  if (priceInput === undefined || priceInput === null) return 'N/A';
+  
+  if (typeof priceInput === 'number') {
+    if (priceInput === 1 || priceInput === -1) return '1 :nebulawl:';
+    if (priceInput > 1) return `${priceInput} :nebulawl:`;
+    if (priceInput < -1) return `${-priceInput}/1 :nebulawl:`;
+    return 'Not Set';
+  }
+
+  // String replacement (replace WL / WLs / wls with :nebulawl:)
+  return String(priceInput)
+    .replace(/\bWLs\b/gi, ':nebulawl:')
+    .replace(/\bWL\b/gi, ':nebulawl:')
+    .trim();
+}
+
 // --- GROQ AI CHAT HELPER ---
 async function askGroqAI(prompt) {
   if (!GROQ_API_KEY) {
-    return 'Groq API Key tanımlanmamış. Lütfen GROQ_API_KEY ortam değişkenini ayarlayın.';
+    return 'AI API Key is not configured. Please set the GROQ_API_KEY environment variable.';
   }
 
   const modelsToTry = [
@@ -48,7 +80,6 @@ async function askGroqAI(prompt) {
     'mixtral-8x7b-32768'
   ];
 
-  // Remove duplicates while preserving order
   const uniqueModels = [...new Set(modelsToTry)];
 
   for (const model of uniqueModels) {
@@ -64,7 +95,7 @@ async function askGroqAI(prompt) {
           messages: [
             {
               role: 'system',
-              content: 'Sen yardımsever, samimi ve zeki bir Discord asistanısın.'
+              content: 'You are a helpful, friendly, and knowledgeable Discord assistant.'
             },
             {
               role: 'user',
@@ -83,14 +114,52 @@ async function askGroqAI(prompt) {
         if (content) return content;
       } else {
         const errText = await response.text();
-        console.warn(`Groq model ${model} error:`, errText);
+        console.warn(`[Groq AI] Model ${model} returned error:`, errText);
       }
     } catch (e) {
-      console.warn(`Groq request failed for ${model}:`, e.message);
+      console.warn(`[Groq AI] Request failed for ${model}:`, e.message);
     }
   }
 
-  return 'Üzgünüm, şu anda yapay zeka yanıt veremiyor. Lütfen daha sonra tekrar deneyin.';
+  return 'Sorry, the AI service is currently unavailable. Please try again later.';
+}
+
+// --- NEBULA ONLINE USERS FETCHER ---
+
+/**
+ * Fetches online proxy users count from /online_users
+ */
+async function fetchNebulaOnlineUsers() {
+  try {
+    const res = await fetch(`${NEBULA_SERVER_URL}/online_users`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json, text/plain' },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const data = await res.json();
+        if (typeof data === 'number') return data;
+        if (Array.isArray(data)) return data.length;
+        if (data && typeof data === 'object') {
+          if (data.online_users !== undefined) return Number(data.online_users);
+          if (data.online !== undefined) return Number(data.online);
+          if (data.count !== undefined) return Number(data.count);
+          if (Array.isArray(data.users)) return data.users.length;
+          return Object.keys(data).length;
+        }
+      } else {
+        const text = await res.text();
+        const parsed = parseInt(text.trim(), 10);
+        if (!isNaN(parsed)) return parsed;
+      }
+    }
+  } catch (err) {
+    // Silently continue if endpoint is not implemented yet
+  }
+  return 0;
 }
 
 // --- NEBULA API HELPERS ---
@@ -103,16 +172,15 @@ async function searchNebulaVends(query) {
     const res = await fetch(`${NEBULA_SERVER_URL}/api/vends/search?query=${encodeURIComponent(query)}`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(6000)
     });
 
     if (!res.ok) {
-      // Fallback: try POST /api/vends/search
       const postRes = await fetch(`${NEBULA_SERVER_URL}/api/vends/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(6000)
       });
       if (postRes.ok) return await postRes.json();
       return { success: false, message: `Server error: HTTP ${res.status}` };
@@ -120,8 +188,8 @@ async function searchNebulaVends(query) {
 
     return await res.json();
   } catch (err) {
-    console.error('Error fetching vend search from Nebula server:', err.message);
-    return { success: false, message: `Sunucuya bağlanılamadı: ${err.message}` };
+    console.error('[Vend Search Error]:', err.message);
+    return { success: false, message: `Could not connect to Nebula Server: ${err.message}` };
   }
 }
 
@@ -142,16 +210,14 @@ async function updateNebulaKey(key, username) {
     });
 
     if (res.ok) {
-      const data = await res.json();
-      return data;
+      return await res.json();
     }
   } catch (e) {
-    // Ignore and fallback below
+    // Fallback to legacy endpoints below
   }
 
   // 2. Fallback: check key, unbind existing username if needed, then bind
   try {
-    // Check if key exists in DB
     const keysRes = await fetch(`${NEBULA_SERVER_URL}/key_data_secret`, {
       method: 'GET',
       headers: { 'Accept': 'application/json' },
@@ -161,18 +227,17 @@ async function updateNebulaKey(key, username) {
     if (keysRes.ok) {
       const allKeys = await keysRes.json();
       if (!allKeys || !allKeys[cleanKey]) {
-        return { success: false, message: 'Bu lisans anahtarı veritabanında bulunamadı!' };
+        return { success: false, message: 'This license key does not exist in the database!' };
       }
 
-      // Check if username is taken by another key
       for (const k in allKeys) {
         if (k !== cleanKey && allKeys[k].username && allKeys[k].username.toLowerCase() === cleanUser.toLowerCase()) {
-          return { success: false, message: 'Bu kullanıcı adı zaten başka bir lisans anahtarına bağlı!' };
+          return { success: false, message: 'This username is already linked to another license key!' };
         }
       }
     }
 
-    // Unbind existing user if any
+    // Unbind existing user
     await fetch(`${NEBULA_SERVER_URL}/api/unbind`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -189,64 +254,81 @@ async function updateNebulaKey(key, username) {
     });
 
     if (bindRes.ok) {
-      const bindData = await bindRes.json();
-      return bindData;
+      return await bindRes.json();
     }
 
-    return { success: false, message: 'Kullanıcı adı güncellenemedi.' };
+    return { success: false, message: 'Failed to update username for this license key.' };
   } catch (err) {
-    console.error('Error updating key on Nebula server:', err.message);
-    return { success: false, message: `Sunucu bağlantı hatası: ${err.message}` };
+    console.error('[Key Update Error]:', err.message);
+    return { success: false, message: `Server connection error: ${err.message}` };
   }
 }
 
-/**
- * Creates Discord Embed for Vend Search results
- */
-function createVendSearchEmbed(query, data) {
+// --- VEND SEARCH PAGINATED EMBED CREATOR ---
+const ITEMS_PER_PAGE = 5;
+
+function createVendPageEmbed(query, data, page = 0) {
   if (!data || !data.success || !data.results || data.results.length === 0) {
     return new EmbedBuilder()
       .setColor(0xE74C3C)
-      .setTitle(`🏪 Nebula Vend Arama: "${query}"`)
-      .setDescription('❌ Bu eşyayı satan hiçbir vending makinesi bulunamadı.')
-      .setFooter({ text: 'Nebula Proxy Vend Arama Sistemi' })
+      .setTitle(`🏪 Nebula Vend Search: "${query}"`)
+      .setDescription('❌ No vending machines found selling this item.')
+      .setFooter({ text: 'Nebula Proxy Vend System' })
       .setTimestamp();
   }
 
   const results = data.results;
   const count = data.count || results.length;
-  const avgPrice = data.avg_price_str || 'N/A';
+  const avgPriceFormatted = formatNebulaPrice(data.avg_price_str || 'N/A');
+  const totalPages = Math.ceil(results.length / ITEMS_PER_PAGE) || 1;
+  const currentPage = Math.max(0, Math.min(page, totalPages - 1));
+
+  const startIndex = currentPage * ITEMS_PER_PAGE;
+  const pageItems = results.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
-    .setTitle(`🏪 Nebula Vend Arama Sonuçları`)
-    .setDescription(`🔎 **Aranan Eşya:** \`${query}\`\n📊 **Ortalama Fiyat:** \`${avgPrice}\`\n📦 **Bulunan Toplam Makine:** \`${count}\` adet\n───────────────────────`)
-    .setFooter({ text: `Nebula Proxy Vend Sistemi • Toplam ${count} sonuç` })
+    .setTitle(`🏪 Nebula Vend Search Results`)
+    .setDescription(`🔎 **Item Query:** \`${query}\`\n📊 **Average Price:** ${avgPriceFormatted}\n📦 **Total Machines Found:** \`${count}\`\n───────────────────────────`)
+    .setFooter({ text: `Page ${currentPage + 1} of ${totalPages} • Nebula Vend Explorer` })
     .setTimestamp();
 
-  // Show up to 10 cheapest listings
-  const maxDisplay = Math.min(10, results.length);
-  for (let i = 0; i < maxDisplay; i++) {
-    const item = results[i];
+  pageItems.forEach((item, idx) => {
+    const globalIdx = startIndex + idx + 1;
+    const priceStr = formatNebulaPrice(item.price_str || item.price);
     const pos = (item.x !== undefined && item.y !== undefined) ? `(X: ${item.x}, Y: ${item.y})` : '';
     const timeAgo = item.time_ago ? `• 🕒 ${item.time_ago}` : '';
 
     embed.addFields({
-      name: `${i + 1}. 🌍 Dünya: ${item.world}`,
-      value: `📦 **Eşya:** ${item.item_name || query}\n💰 **Fiyat:** \`${item.price_str || item.price}\` ${pos} ${timeAgo}`,
+      name: `${globalIdx}. 🌍 World: **${item.world}**`,
+      value: `📦 **Item:** ${item.item_name || query}\n💰 **Price:** **${priceStr}** ${pos} ${timeAgo}`,
       inline: false
     });
-  }
-
-  if (results.length > maxDisplay) {
-    embed.addFields({
-      name: '➕ Daha Fazlası',
-      value: `*... ve ${results.length - maxDisplay} adet daha dünya listelendi.*`,
-      inline: false
-    });
-  }
+  });
 
   return embed;
+}
+
+function createVendPaginationRow(currentPage, totalPages, customIdPrefix) {
+  const prevBtn = new ButtonBuilder()
+    .setCustomId(`${customIdPrefix}_prev`)
+    .setLabel('◀ Previous')
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(currentPage <= 0);
+
+  const pageIndicator = new ButtonBuilder()
+    .setCustomId(`${customIdPrefix}_page`)
+    .setLabel(`${currentPage + 1} / ${totalPages}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(true);
+
+  const nextBtn = new ButtonBuilder()
+    .setCustomId(`${customIdPrefix}_next`)
+    .setLabel('Next ▶')
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(currentPage >= totalPages - 1);
+
+  return new ActionRowBuilder().addComponents(prevBtn, pageIndicator, nextBtn);
 }
 
 // --- DISCORD CLIENT SETUP ---
@@ -255,52 +337,106 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates
   ]
 });
 
-// Slash commands definition
+// Slash commands definition (Full English)
 const commands = [
   new SlashCommandBuilder()
     .setName('give')
-    .setDescription('Kullanıcıya özel yetki rollerini atar')
+    .setDescription('Assign specialized roles to a specific user')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
     .addUserOption(option => 
       option.setName('target')
-        .setDescription('Rol verilecek kullanıcı')
+        .setDescription('The user to receive the roles')
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('key')
-    .setDescription('Orijinal Nebula lisans anahtarınıza yeni bir Growtopia/Nebula kullanıcı adı bağlayın')
+    .setDescription('Bind or change the Growtopia/Nebula username linked to your license key')
     .addStringOption(option =>
       option.setName('key')
-        .setDescription('Orijinal Nebula Lisans Anahtarınız (Örn: Nebula-XXXXX veya TEST_KEY)')
+        .setDescription('Your original Nebula License Key (e.g., Nebula-XXXXX or TEST_KEY)')
         .setRequired(true)
     )
     .addStringOption(option =>
       option.setName('username')
-        .setDescription('Bağlamak istediğiniz yeni Growtopia kullanıcı adınız')
+        .setDescription('Your desired Growtopia/Nebula username to bind')
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('vend')
-    .setDescription('Vending makinelerinde satılan Growtopia eşyalarını ve fiyatlarını arar')
+    .setDescription('Search Growtopia items and prices across all vending machines')
     .addStringOption(option =>
       option.setName('item')
-        .setDescription('Aramak istediğiniz eşyanın adı veya ID numarası (Örn: magplant, dirt, 242)')
+        .setDescription('Item name or ID to search for (e.g., magplant, dirt, 242)')
         .setRequired(true)
     )
 ];
 
-// Register slash commands
-client.on('clientReady', async () => {
-  console.log(`Bot logged in as ${client.user.tag}`);
+// --- VOICE AUTO-JOIN HELPER ---
+async function joinTargetVoiceChannel() {
+  if (!VOICE_CHANNEL_ID) return;
 
+  try {
+    const channel = await client.channels.fetch(VOICE_CHANNEL_ID);
+    if (!channel || !channel.isVoiceBased()) {
+      console.warn(`[Voice] Channel ID ${VOICE_CHANNEL_ID} is not a valid voice channel.`);
+      return;
+    }
+
+    if (joinVoiceChannel) {
+      joinVoiceChannel({
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator,
+        selfDeaf: true,
+        selfMute: true
+      });
+      console.log(`[Voice] Successfully joined voice channel: #${channel.name}`);
+    } else {
+      console.log('[Voice] @discordjs/voice is not available.');
+    }
+  } catch (err) {
+    console.error('[Voice Error] Failed to join voice channel:', err.message);
+  }
+}
+
+// --- PERIODIC STATS & PRESENCE UPDATER ---
+async function updateProxyStatsAndPresence() {
+  const onlineUsers = await fetchNebulaOnlineUsers();
+
+  client.user.setPresence({
+    activities: [
+      {
+        name: `🟢 ${onlineUsers} Online | Nebula Proxy`,
+        type: ActivityType.Watching
+      }
+    ],
+    status: 'online'
+  });
+
+  console.log(`[Proxy Sync] Online Users from /online_users: ${onlineUsers}`);
+}
+
+// Register slash commands upon bot readiness
+client.on('clientReady', async () => {
+  console.log(`[Bot Ready] Logged in as ${client.user.tag}`);
+
+  // 1. Join voice channel if configured
+  await joinTargetVoiceChannel();
+
+  // 2. Fetch online users & set presence immediately, then loop every 60s
+  await updateProxyStatsAndPresence();
+  setInterval(updateProxyStatsAndPresence, 60000);
+
+  // 3. Register Slash Commands
   if (!BOT_TOKEN) {
-    console.warn('WARNING: DISCORD_TOKEN is not defined in environment variables.');
+    console.warn('WARNING: DISCORD_TOKEN is missing in environment variables.');
     return;
   }
 
@@ -317,7 +453,7 @@ client.on('clientReady', async () => {
   }
 });
 
-// --- SLASH COMMAND HANDLER ---
+// --- SLASH COMMAND INTERACTION HANDLER ---
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -326,18 +462,18 @@ client.on('interactionCreate', async (interaction) => {
     const targetMember = interaction.options.getMember('target');
 
     if (!targetMember) {
-      return interaction.reply({ content: 'Kullanıcı bu sunucuda bulunamadı.', flags: 64 });
+      return interaction.reply({ content: 'User could not be found in this server.', flags: 64 });
     }
 
     try {
       await targetMember.roles.add([ROLE_ID_1, ROLE_ID_2]);
       await interaction.reply({ 
-        content: `Başarıyla ${targetMember.user.tag} kullanıcısına roller verildi!` 
+        content: `Successfully granted both roles to ${targetMember.user.tag}!` 
       });
     } catch (err) {
       console.error('Failed to assign roles:', err);
       await interaction.reply({ 
-        content: 'Rol atanırken hata oluştu. Yetkileri kontrol edin.', 
+        content: 'Failed to assign roles. Please check my permissions and role hierarchy.', 
         flags: 64 
       });
     }
@@ -345,7 +481,7 @@ client.on('interactionCreate', async (interaction) => {
 
   // 2. /key COMMAND (Key & Username Bind/Change)
   if (interaction.commandName === 'key') {
-    // Reply ephemerally so the user's license key remains completely private
+    // Ephemeral reply so license keys are never leaked to the channel
     await interaction.deferReply({ flags: 64 });
 
     const key = interaction.options.getString('key').trim();
@@ -353,7 +489,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (username.length < 3 || username.length > 24) {
       return interaction.editReply({ 
-        content: '❌ **Hata:** Kullanıcı adı 3 ile 24 karakter arasında olmalıdır.' 
+        content: '❌ **Error:** Username must be between 3 and 24 characters long.' 
       });
     }
 
@@ -362,37 +498,76 @@ client.on('interactionCreate', async (interaction) => {
     if (res && res.success) {
       const embed = new EmbedBuilder()
         .setColor(0x2ECC71)
-        .setTitle('✅ Nebula Lisans Anahtarı Güncellendi')
-        .setDescription('Lisans anahtarınız başarıyla yeni kullanıcı adınıza bağlandı!')
+        .setTitle('✅ Nebula License Key Updated')
+        .setDescription('Your license key has been successfully bound to your new username!')
         .addFields(
-          { name: '🔑 Lisans Anahtarı', value: `\`||${key}||\``, inline: true },
-          { name: '👤 Bağlanan Kullanıcı Adı', value: `\`${username}\``, inline: true }
+          { name: '🔑 License Key', value: `\`||${key}||\``, inline: true },
+          { name: '👤 Bound Username', value: `\`${username}\``, inline: true }
         )
-        .setFooter({ text: 'Nebula Proxy Lisanslama Sistemi' })
+        .setFooter({ text: 'Nebula Proxy Licensing System' })
         .setTimestamp();
 
       await interaction.editReply({ embeds: [embed] });
     } else {
-      const errMsg = res?.message || 'Lisans anahtarı güncellenemedi.';
+      const errMsg = res?.message || 'Failed to update license key.';
       const embed = new EmbedBuilder()
         .setColor(0xE74C3C)
-        .setTitle('❌ İşlem Başarısız')
-        .setDescription(`**Hata:** ${errMsg}`)
-        .setFooter({ text: 'Nebula Proxy Lisanslama Sistemi' })
+        .setTitle('❌ Action Failed')
+        .setDescription(`**Error:** ${errMsg}`)
+        .setFooter({ text: 'Nebula Proxy Licensing System' })
         .setTimestamp();
 
       await interaction.editReply({ embeds: [embed] });
     }
   }
 
-  // 3. /vend COMMAND (Slash Command Search)
+  // 3. /vend COMMAND (Paginated Vend Search)
   if (interaction.commandName === 'vend') {
     await interaction.deferReply();
     const itemQuery = interaction.options.getString('item').trim();
 
     const data = await searchNebulaVends(itemQuery);
-    const embed = createVendSearchEmbed(itemQuery, data);
-    await interaction.editReply({ embeds: [embed] });
+    let currentPage = 0;
+    const totalResults = data?.results?.length || 0;
+    const totalPages = Math.ceil(totalResults / ITEMS_PER_PAGE) || 1;
+
+    const embed = createVendPageEmbed(itemQuery, data, currentPage);
+    const customIdPrefix = `vend_slash_${interaction.id}`;
+
+    let replyMessage;
+    if (totalPages > 1) {
+      const row = createVendPaginationRow(currentPage, totalPages, customIdPrefix);
+      replyMessage = await interaction.editReply({ embeds: [embed], components: [row] });
+
+      const collector = replyMessage.createMessageComponentCollector({
+        componentType: ComponentType.Button,
+        time: 300000 // 5 minutes
+      });
+
+      collector.on('collect', async (i) => {
+        if (i.user.id !== interaction.user.id) {
+          return i.reply({ content: 'Only the command author can browse pages.', flags: 64 });
+        }
+
+        if (i.customId === `${customIdPrefix}_prev`) {
+          currentPage = Math.max(0, currentPage - 1);
+        } else if (i.customId === `${customIdPrefix}_next`) {
+          currentPage = Math.min(totalPages - 1, currentPage + 1);
+        }
+
+        const newEmbed = createVendPageEmbed(itemQuery, data, currentPage);
+        const newRow = createVendPaginationRow(currentPage, totalPages, customIdPrefix);
+        await i.update({ embeds: [newEmbed], components: [newRow] });
+      });
+
+      collector.on('end', async () => {
+        try {
+          await interaction.editReply({ components: [] });
+        } catch (e) {}
+      });
+    } else {
+      await interaction.editReply({ embeds: [embed] });
+    }
   }
 });
 
@@ -404,34 +579,72 @@ client.on('messageCreate', async (message) => {
   if (TARGET_CHANNEL_ID && message.channel.id === TARGET_CHANNEL_ID) {
     try {
       await message.guild.members.ban(message.author.id, { 
-        reason: 'Triggered the honeypot channel.' 
+        reason: 'Triggered the honeypot trap channel.' 
       });
       if (message.deletable) await message.delete();
-      console.log(`Banned ${message.author.tag} in trap channel.`);
+      console.log(`[Trap] Banned ${message.author.tag} in honeypot channel.`);
     } catch (err) {
-      console.error('Ban error:', err);
+      console.error('[Trap Error]:', err);
     }
     return;
   }
 
   const content = message.content.trim();
 
-  // 2. !vend <item_adi> COMMAND
+  // 2. !vend <item_name> COMMAND (Paginated)
   if (content.toLowerCase().startsWith('!vend')) {
     const itemQuery = content.slice(5).trim();
 
     if (!itemQuery) {
-      return message.reply('ℹ️ **Kullanım:** `!vend <item_adi veya ID>`\n*Örnek:* `!vend magplant` veya `!vend dirt`');
+      return message.reply('ℹ️ **Usage:** `!vend <item_name or ID>`\n*Example:* `!vend magplant` or `!vend dirt`');
     }
 
     try {
       await message.channel.sendTyping();
       const data = await searchNebulaVends(itemQuery);
-      const embed = createVendSearchEmbed(itemQuery, data);
-      return message.reply({ embeds: [embed] });
+      let currentPage = 0;
+      const totalResults = data?.results?.length || 0;
+      const totalPages = Math.ceil(totalResults / ITEMS_PER_PAGE) || 1;
+
+      const embed = createVendPageEmbed(itemQuery, data, currentPage);
+      const customIdPrefix = `vend_msg_${message.id}`;
+
+      if (totalPages > 1) {
+        const row = createVendPaginationRow(currentPage, totalPages, customIdPrefix);
+        const sentMessage = await message.reply({ embeds: [embed], components: [row] });
+
+        const collector = sentMessage.createMessageComponentCollector({
+          componentType: ComponentType.Button,
+          time: 300000 // 5 minutes
+        });
+
+        collector.on('collect', async (i) => {
+          if (i.user.id !== message.author.id) {
+            return i.reply({ content: 'Only the command author can browse pages.', flags: 64 });
+          }
+
+          if (i.customId === `${customIdPrefix}_prev`) {
+            currentPage = Math.max(0, currentPage - 1);
+          } else if (i.customId === `${customIdPrefix}_next`) {
+            currentPage = Math.min(totalPages - 1, currentPage + 1);
+          }
+
+          const newEmbed = createVendPageEmbed(itemQuery, data, currentPage);
+          const newRow = createVendPaginationRow(currentPage, totalPages, customIdPrefix);
+          await i.update({ embeds: [newEmbed], components: [newRow] });
+        });
+
+        collector.on('end', async () => {
+          try {
+            await sentMessage.edit({ components: [] });
+          } catch (e) {}
+        });
+      } else {
+        return message.reply({ embeds: [embed] });
+      }
     } catch (err) {
-      console.error('!vend command error:', err);
-      return message.reply('❌ Vending verileri aranırken bir hata oluştu.');
+      console.error('[!vend Error]:', err);
+      return message.reply('❌ An error occurred while searching for vending machines.');
     }
   }
 
@@ -441,7 +654,7 @@ client.on('messageCreate', async (message) => {
       const prompt = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
       
       if (!prompt) {
-        return message.reply('Nasıl yardımcı olabilirim?');
+        return message.reply('Hello! How can I assist you today?');
       }
 
       await message.channel.sendTyping();
@@ -454,8 +667,8 @@ client.on('messageCreate', async (message) => {
         await message.reply(replyText);
       }
     } catch (err) {
-      console.error('Groq AI Error:', err);
-      message.reply('İsteğiniz işlenirken bir hata oluştu.');
+      console.error('[AI Chat Error]:', err);
+      message.reply('An error occurred while processing your request.');
     }
   }
 });
@@ -463,5 +676,5 @@ client.on('messageCreate', async (message) => {
 if (BOT_TOKEN) {
   client.login(BOT_TOKEN);
 } else {
-  console.log('DISCORD_TOKEN is missing. Bot will not login until DISCORD_TOKEN is set.');
+  console.log('[Warning] DISCORD_TOKEN is missing. Bot will not login until DISCORD_TOKEN is set.');
 }
