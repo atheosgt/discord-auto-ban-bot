@@ -7,8 +7,39 @@ const {
   PermissionFlagsBits, 
   EmbedBuilder 
 } = require('discord.js');
-const { GoogleGenAI } = require('@google/genai');
 const express = require('express');
+
+// --- GOOGLE GEMINI AI SETUP (Compatible with @google/generative-ai and @google/genai) ---
+let aiModel = null;
+if (process.env.GEMINI_API_KEY) {
+  try {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    aiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    console.log('Gemini AI initialized with @google/generative-ai');
+  } catch (e1) {
+    try {
+      const { GoogleGenAI } = require('@google/genai');
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      aiModel = {
+        generateContent: async (prompt) => {
+          const res = await ai.models.generateContent({
+            model: 'gemini-2.0-flash',
+            contents: prompt
+          });
+          return {
+            response: {
+              text: () => res.text || ''
+            }
+          };
+        }
+      };
+      console.log('Gemini AI initialized with @google/genai');
+    } catch (e2) {
+      console.warn('Gemini AI package not found, AI mention chat will be disabled.');
+    }
+  }
+}
 
 // --- KEEP-ALIVE SERVER FOR RENDER / HOSTING ---
 const app = express();
@@ -21,9 +52,6 @@ app.get('/', (req, res) => {
 app.listen(port, () => {
   console.log(`Web server running on port ${port}`);
 });
-
-// --- GOOGLE GEMINI AI SETUP ---
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 // --- CONFIGURATION ---
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
@@ -378,9 +406,9 @@ client.on('messageCreate', async (message) => {
   }
 
   // 3. AI CHAT LOGIC (When mentioned)
-  if (ai && message.mentions.has(client.user)) {
+  if (aiModel && message.mentions.has(client.user)) {
     try {
-      const prompt = message.content.replace(`<@${client.user.id}>`, '').trim();
+      const prompt = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
       
       if (!prompt) {
         return message.reply('Nasıl yardımcı olabilirim?');
@@ -388,12 +416,8 @@ client.on('messageCreate', async (message) => {
 
       await message.channel.sendTyping();
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: prompt,
-      });
-
-      const replyText = response.text || 'Bir yanıt oluşturulamadı.';
+      const result = await aiModel.generateContent(prompt);
+      const replyText = (typeof result?.response?.text === 'function' ? result.response.text() : result?.text) || 'Bir yanıt oluşturulamadı.';
       
       if (replyText.length > 2000) {
         await message.reply(replyText.substring(0, 1995) + '...');
