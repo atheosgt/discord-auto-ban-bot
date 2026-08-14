@@ -9,38 +9,6 @@ const {
 } = require('discord.js');
 const express = require('express');
 
-// --- GOOGLE GEMINI AI SETUP (Compatible with @google/generative-ai and @google/genai) ---
-let aiModel = null;
-if (process.env.GEMINI_API_KEY) {
-  try {
-    const { GoogleGenerativeAI } = require('@google/generative-ai');
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    aiModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    console.log('Gemini AI initialized with @google/generative-ai');
-  } catch (e1) {
-    try {
-      const { GoogleGenAI } = require('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      aiModel = {
-        generateContent: async (prompt) => {
-          const res = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: prompt
-          });
-          return {
-            response: {
-              text: () => res.text || ''
-            }
-          };
-        }
-      };
-      console.log('Gemini AI initialized with @google/genai');
-    } catch (e2) {
-      console.warn('Gemini AI package not found, AI mention chat will be disabled.');
-    }
-  }
-}
-
 // --- KEEP-ALIVE SERVER FOR RENDER / HOSTING ---
 const app = express();
 const port = process.env.PORT || 3000;
@@ -56,12 +24,73 @@ app.listen(port, () => {
 // --- CONFIGURATION ---
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
+const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const NEBULA_SERVER_URL = (process.env.NEBULA_SERVER_URL || 'http://212.180.120.172:3000').replace(/\/$/, '');
 const NEBULA_OWNER_PASSWORD = process.env.NEBULA_OWNER_PASSWORD || 'nebula_owner_sec';
 
 // Role IDs to assign with /give command
 const ROLE_ID_1 = '1527450826698920026';
 const ROLE_ID_2 = '1527450854209224835';
+
+// --- GROQ AI CHAT HELPER ---
+async function askGroqAI(prompt) {
+  if (!GROQ_API_KEY) {
+    return 'Groq API Key tanımlanmamış. Lütfen GROQ_API_KEY ortam değişkenini ayarlayın.';
+  }
+
+  const modelsToTry = [
+    GROQ_MODEL,
+    'llama-3.3-70b-versatile',
+    'llama-3.1-70b-versatile',
+    'llama-3.1-8b-instant',
+    'mixtral-8x7b-32768'
+  ];
+
+  // Remove duplicates while preserving order
+  const uniqueModels = [...new Set(modelsToTry)];
+
+  for (const model of uniqueModels) {
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            {
+              role: 'system',
+              content: 'Sen yardımsever, samimi ve zeki bir Discord asistanısın.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 1024,
+          temperature: 0.7
+        }),
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data?.choices?.[0]?.message?.content;
+        if (content) return content;
+      } else {
+        const errText = await response.text();
+        console.warn(`Groq model ${model} error:`, errText);
+      }
+    } catch (e) {
+      console.warn(`Groq request failed for ${model}:`, e.message);
+    }
+  }
+
+  return 'Üzgünüm, şu anda yapay zeka yanıt veremiyor. Lütfen daha sonra tekrar deneyin.';
+}
 
 // --- NEBULA API HELPERS ---
 
@@ -405,8 +434,8 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // 3. AI CHAT LOGIC (When mentioned)
-  if (aiModel && message.mentions.has(client.user)) {
+  // 3. GROQ AI CHAT LOGIC (When mentioned)
+  if (message.mentions.has(client.user)) {
     try {
       const prompt = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
       
@@ -416,8 +445,7 @@ client.on('messageCreate', async (message) => {
 
       await message.channel.sendTyping();
 
-      const result = await aiModel.generateContent(prompt);
-      const replyText = (typeof result?.response?.text === 'function' ? result.response.text() : result?.text) || 'Bir yanıt oluşturulamadı.';
+      const replyText = await askGroqAI(prompt);
       
       if (replyText.length > 2000) {
         await message.reply(replyText.substring(0, 1995) + '...');
@@ -425,7 +453,7 @@ client.on('messageCreate', async (message) => {
         await message.reply(replyText);
       }
     } catch (err) {
-      console.error('AI Error:', err);
+      console.error('Groq AI Error:', err);
       message.reply('İsteğiniz işlenirken bir hata oluştu.');
     }
   }
