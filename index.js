@@ -50,7 +50,7 @@ const VENDFIND_CHANNEL_ID = process.env.VENDFIND_CHANNEL_ID || '1532358051342848
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-const NEBULA_SERVER_URL = (process.env.NEBULA_SERVER_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+const NEBULA_SERVER_URL = (process.env.NEBULA_SERVER_URL || 'http://212.180.120.172:3000').replace(/\/$/, '');
 const NEBULA_OWNER_PASSWORD = process.env.NEBULA_OWNER_PASSWORD || 'nebula_owner_sec';
 
 // Role IDs
