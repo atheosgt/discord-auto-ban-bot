@@ -53,16 +53,16 @@ function formatNebulaPrice(priceInput) {
   if (priceInput === undefined || priceInput === null) return 'N/A';
   
   if (typeof priceInput === 'number') {
-    if (priceInput === 1 || priceInput === -1) return '1 :nebulawl:';
-    if (priceInput > 1) return `${priceInput} :nebulawl:`;
-    if (priceInput < -1) return `${-priceInput}/1 :nebulawl:`;
+    if (priceInput === 1 || priceInput === -1) return '1 <:nebulawl:1537932427400319167>';
+    if (priceInput > 1) return `${priceInput} <:nebulawl:1537932427400319167>`;
+    if (priceInput < -1) return `${-priceInput}/1 <:nebulawl:1537932427400319167>`;
     return 'Not Set';
   }
 
-  // String replacement (replace WL / WLs / wls with :nebulawl:)
+  // String replacement (replace WL / WLs / wls with <:nebulawl:1537932427400319167>)
   return String(priceInput)
-    .replace(/\bWLs\b/gi, ':nebulawl:')
-    .replace(/\bWL\b/gi, ':nebulawl:')
+    .replace(/\bWLs\b/gi, '<:nebulawl:1537932427400319167>')
+    .replace(/\bWL\b/gi, '<:nebulawl:1537932427400319167>')
     .trim();
 }
 
