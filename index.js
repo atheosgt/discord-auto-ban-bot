@@ -53,16 +53,16 @@ function formatNebulaPrice(priceInput) {
   if (priceInput === undefined || priceInput === null) return 'N/A';
   
   if (typeof priceInput === 'number') {
-    if (priceInput === 1 || priceInput === -1) return '1 :nebulawl:';
-    if (priceInput > 1) return `${priceInput} :nebulawl:`;
-    if (priceInput < -1) return `${-priceInput}/1 :nebulawl:`;
+    if (priceInput === 1 || priceInput === -1) return '1 <:nebulawl:1537932427400319167>';
+    if (priceInput > 1) return `${priceInput} <:nebulawl:1537932427400319167>`;
+    if (priceInput < -1) return `${-priceInput}/1 <:nebulawl:1537932427400319167>`;
     return 'Not Set';
   }
 
-  // String replacement (replace WL / WLs / wls with :nebulawl:)
+  // String replacement (replace WL / WLs / wls with <:nebulawl:1537932427400319167>)
   return String(priceInput)
-    .replace(/\bWLs\b/gi, ':nebulawl:')
-    .replace(/\bWL\b/gi, ':nebulawl:')
+    .replace(/\bWLs\b/gi, '<:nebulawl:1537932427400319167>')
+    .replace(/\bWL\b/gi, '<:nebulawl:1537932427400319167>')
     .trim();
 }
 
@@ -125,6 +125,8 @@ async function askGroqAI(prompt) {
 }
 
 // --- NEBULA STATS & VEND DATA FETCHER ---
+let cachedTotalVends = 0;
+let cachedTotalWorlds = 0;
 
 /**
  * Fetches total tracked vending machines count from Nebula server
@@ -141,10 +143,13 @@ async function fetchTotalVendingMachines() {
     if (res.ok) {
       const data = await res.json();
       if (data && data.stats && data.stats.totalVends !== undefined) {
-        return {
-          totalVends: data.stats.totalVends || 0,
-          totalWorlds: data.stats.totalWorlds || 0
-        };
+        const tv = Number(data.stats.totalVends) || 0;
+        const tw = Number(data.stats.totalWorlds) || 0;
+        if (tv > 0) {
+          cachedTotalVends = tv;
+          cachedTotalWorlds = tw;
+        }
+        return { totalVends: cachedTotalVends, totalWorlds: cachedTotalWorlds };
       }
     }
   } catch (e) {}
@@ -166,11 +171,15 @@ async function fetchTotalVendingMachines() {
           totalVends += vendDb[w].items.length;
         }
       }
-      return { totalVends, totalWorlds };
+      if (totalVends > 0) {
+        cachedTotalVends = totalVends;
+        cachedTotalWorlds = totalWorlds;
+      }
+      return { totalVends: cachedTotalVends, totalWorlds: cachedTotalWorlds };
     }
   } catch (e) {}
 
-  return { totalVends: 0, totalWorlds: 0 };
+  return { totalVends: cachedTotalVends, totalWorlds: cachedTotalWorlds };
 }
 
 // --- NEBULA API HELPERS ---
@@ -350,7 +359,16 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildVoiceStates
-  ]
+  ],
+  presence: {
+    status: 'online',
+    activities: [
+      {
+        name: '📦 Scanning Vending Machines | Nebula',
+        type: ActivityType.Watching
+      }
+    ]
+  }
 });
 
 // Slash commands definition (Full English)
@@ -417,33 +435,45 @@ async function joinTargetVoiceChannel() {
   }
 }
 
-// --- PERIODIC STATS & PRESENCE UPDATER ---
+// --- PERSISTENT ACTIVITY UPDATER ---
 async function updateProxyStatsAndPresence() {
-  const { totalVends, totalWorlds } = await fetchTotalVendingMachines();
+  if (!client.user) return;
 
-  client.user.setPresence({
-    activities: [
-      {
-        name: `📦 ${totalVends.toLocaleString()} Vending Machines | Nebula`,
-        type: ActivityType.Watching
-      }
-    ],
-    status: 'online'
-  });
+  try {
+    const { totalVends } = await fetchTotalVendingMachines();
+    const countToDisplay = (totalVends > 0) ? totalVends : (cachedTotalVends > 0 ? cachedTotalVends : 0);
 
-  console.log(`[Proxy Sync] Tracking ${totalVends} vending machines across ${totalWorlds} worlds.`);
+    const activityText = countToDisplay > 0 
+      ? `📦 ${countToDisplay.toLocaleString()} Vending Machines | Nebula` 
+      : '📦 Scanning Vending Machines | Nebula';
+
+    // Force set activity and online status consistently
+    client.user.setPresence({
+      status: 'online',
+      activities: [
+        {
+          name: activityText,
+          type: ActivityType.Watching
+        }
+      ]
+    });
+
+    console.log(`[Activity Updated] "${activityText}"`);
+  } catch (err) {
+    console.error('[Activity Update Error]:', err.message);
+  }
 }
 
-// Register slash commands upon bot readiness
+// Re-assert presence on ready and shard events
 client.on('clientReady', async () => {
   console.log(`[Bot Ready] Logged in as ${client.user.tag}`);
 
   // 1. Join voice channel if configured
   await joinTargetVoiceChannel();
 
-  // 2. Fetch vending machines count & set presence immediately, then loop every 60s
+  // 2. Fetch and set presence immediately, then keep it alive every 25 seconds
   await updateProxyStatsAndPresence();
-  setInterval(updateProxyStatsAndPresence, 60000);
+  setInterval(updateProxyStatsAndPresence, 25000);
 
   // 3. Register Slash Commands
   if (!BOT_TOKEN) {
@@ -462,6 +492,10 @@ client.on('clientReady', async () => {
   } catch (error) {
     console.error('Failed to register slash commands:', error);
   }
+});
+
+client.on('shardResume', () => {
+  updateProxyStatsAndPresence();
 });
 
 // --- SLASH COMMAND INTERACTION HANDLER ---
