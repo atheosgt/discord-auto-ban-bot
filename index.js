@@ -64,7 +64,7 @@ const ROLE_ID_2 = '1527450854209224835';
 // ============================================================================
 const EMOJIS = {
   // Para Birimleri (Currencies - WL / DL / BGL)
-  nebulawl: 'nebulawl',                                           // Growtopia WL / Nebula WL
+  nebulawl: '<:nebulawl:1537932427400319167>',                   // Growtopia WL / Nebula WL
   dl: '<:nebuladl:1527656071043481792>',                          // Diamond Lock
   bgl: '<:nebulabgl:1527655551956160763>',                        // Blue Gem Lock
 
@@ -450,14 +450,13 @@ function createVendPageEmbed(query, data, page = 0) {
     .setFooter({ text: `Page ${currentPage + 1} of ${totalPages} • Nebula Vend Explorer` })
     .setTimestamp();
 
-  pageItems.forEach((item, idx) => {
-    const globalIdx = startIndex + idx + 1;
+  pageItems.forEach((item) => {
     const priceStr = formatNebulaPrice(item.price_str || item.price);
     const pos = (item.x !== undefined && item.y !== undefined) ? `${wrenchEmoji} \`(X: ${item.x}, Y: ${item.y})\`` : '';
     const timeAgo = item.time_ago ? `• ${clockEmoji} ${item.time_ago}` : '';
 
     embed.addFields({
-      name: `${globalIdx}. ${globeEmoji} World: **${item.world}**`,
+      name: `${globeEmoji} World: **${item.world}**`,
       value: `${digivendEmoji} **Item:** ${item.item_name || query}\n💰 **Price:** **${priceStr}** ${pos} ${timeAgo}`,
       inline: false
     });
