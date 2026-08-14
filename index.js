@@ -49,21 +49,137 @@ const NEBULA_OWNER_PASSWORD = process.env.NEBULA_OWNER_PASSWORD || 'nebula_owner
 const ROLE_ID_1 = '1527450826698920026'; // Required role for /key and assigned by /give
 const ROLE_ID_2 = '1527450854209224835';
 
+// ============================================================================
+// 🎨 EMOJI CONFIGURATION (KOLAYCA DEĞİŞTİRİLEBİLİR EMOJİ AYARLARI)
+// Buraya emoji adı ('digivend'), Discord ID'si ('<:digivend:12345>' / '12345')
+// veya doğrudan unicode emoji ('🏪') yazabilirsiniz.
+// ============================================================================
+const EMOJIS = {
+  // Para Birimleri (Currencies - WL / DL / BGL)
+  nebulawl: '<:nebulawl:1537932427400319167>',                                           // Growtopia WL / Nebula WL
+  dl: '<:nebuladl:1527656071043481792>',                                                       // Diamond Lock
+  bgl: '<:nebulabgl:1527655551956160763>',                                                     // Blue Gem Lock
+
+  // Vend & Arama İkonları (Vend & Search Icons)
+  digivend: '<:digivend:1537940298414432258>',                    // Vending Machine
+  globe: '<:nebulaglobe:1537943954417520750>',                                                 // Dünya / World ikonu (nebulaglobe)
+  combox: '<:nebulacombox:1537941208368943144>',                                               // Kutu / Stok / Toplam vend (nebulacombox)
+  wrench: '<:nebulawrench:1537945028045836298>',                  // İngiliz anahtarı / Koordinat
+  clock: '<:nebulaclock:1537945353003859978>',                    // Saat / Zaman damgası
+  megaphone: '<:nebulamegaphone:1537945029715169340>',            // Arama terimi / Duyuru
+
+  // Sayfalama Butonları (Pagination Buttons)
+  arrowleft: '<:nebulaarrowleft:1537943552192151572>',            // Sol ok butonu (Önceki sayfa)
+  arrowright: '<:nebulaarrowright:1537943550069706792>',          // Sağ ok butonu (Sonraki sayfa)
+
+  // Bildirim & Durum İkonları (Status & Alerts)
+  warn: '<:nebulawarn:1537943562111680623>',                      // Hata / Uyarı ikonu
+  info: '<:nebulainfo:1537945016805359706>',                      // Bilgi / Kullanım ikonu
+  checkmark: '<:nebulacheckmark:1537943560291356773>',            // Başarılı / Onay ikonu
+  worldkey: '<:nebulaworldkey:1537943553743917057>',              // Anahtar / Lisans ikonu
+
+  // Diğer Emojiler
+  muted: '<:nebulamuted:1537945031258931291>',
+  thumbsup: 'thumbsup',
+  thumbsdown: 'thumbsdown',
+  peace: 'peace',
+  nuke: 'nuke',
+  checkbox: 'checkbox',
+  checkboxenabled: 'checkboxenabled',
+  enterworld: 'enterworld',
+  leaveworld: 'leaveworld',
+  prlogo: 'prlogo',
+  tilusfix: 'tilusfix'
+};
+
+// --- DYNAMIC DISCORD CUSTOM EMOJI RESOLVER ---
+/**
+ * Resolves custom server emojis from the EMOJIS configuration, cache, or raw input.
+ */
+function getEmoji(key, fallback = '') {
+  const val = (EMOJIS && EMOJIS[key]) ? EMOJIS[key] : key;
+  if (!val) return fallback;
+
+  // 1. If it's already a full custom Discord emoji string (<:name:123> or <a:name:123>)
+  if (typeof val === 'string' && /<a?:[a-zA-Z0-9_]+:\d+>/.test(val.trim())) {
+    return val.trim();
+  }
+
+  // 2. If it's pure numeric ID
+  if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+    if (client && client.emojis && client.emojis.cache) {
+      const emoji = client.emojis.cache.get(val.trim());
+      if (emoji) return emoji.toString();
+    }
+    return `<:_:${val.trim()}>`;
+  }
+
+  // 3. Search client emoji cache by exact name or with nebula prefix
+  if (client && client.emojis && client.emojis.cache) {
+    const rawVal = String(val).toLowerCase();
+    const cleanVal = rawVal.replace(/^nebula/, '');
+    const found = client.emojis.cache.find(e => {
+      const eName = e.name.toLowerCase();
+      return eName === rawVal || eName === `nebula${cleanVal}` || eName === cleanVal;
+    });
+    if (found) return found.toString();
+  }
+
+  // 4. Fallback
+  return fallback || `:${val}:`;
+}
+
+function getEmojiIdentifier(key, fallback = null) {
+  const val = (EMOJIS && EMOJIS[key]) ? EMOJIS[key] : key;
+  if (!val) return fallback;
+
+  // 1. Extract ID from '<:name:12345>'
+  const match = typeof val === 'string' ? val.match(/<a?:[a-zA-Z0-9_]+:(\d+)>/) || val.match(/:(\d+)>/) : null;
+  if (match) return match[1];
+
+  // 2. If pure numeric ID
+  if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+    return val.trim();
+  }
+
+  // 3. Search client emoji cache by name
+  if (client && client.emojis && client.emojis.cache) {
+    const rawVal = String(val).toLowerCase();
+    const cleanVal = rawVal.replace(/^nebula/, '');
+    const found = client.emojis.cache.find(e => {
+      const eName = e.name.toLowerCase();
+      return eName === rawVal || eName === `nebula${cleanVal}` || eName === cleanVal;
+    });
+    if (found) return found.id;
+  }
+
+  return fallback;
+}
+
 // --- PRICE & EMOJI FORMATTER ---
 function formatNebulaPrice(priceInput) {
   if (priceInput === undefined || priceInput === null) return 'N/A';
   
+  const wlEmoji = getEmoji('nebulawl', '🟡');
+  const dlEmoji = getEmoji('dl', '💎');
+  const bglEmoji = getEmoji('bgl', '💠');
+
   if (typeof priceInput === 'number') {
-    if (priceInput === 1 || priceInput === -1) return '1 :nebulawl:';
-    if (priceInput > 1) return `${priceInput} :nebulawl:`;
-    if (priceInput < -1) return `${-priceInput}/1 :nebulawl:`;
+    if (priceInput === 1 || priceInput === -1) return `1 ${wlEmoji}`;
+    if (priceInput > 1) return `${priceInput} ${wlEmoji}`;
+    if (priceInput < -1) return `${-priceInput}/1 ${wlEmoji}`;
     return 'Not Set';
   }
 
-  // String replacement (replace WL / WLs / wls with :nebulawl:)
+  // String replacement (replace WL / WLs / DL / DLs / BGL / BGLs with custom emojis)
   return String(priceInput)
-    .replace(/\bWLs\b/gi, ':nebulawl:')
-    .replace(/\bWL\b/gi, ':nebulawl:')
+    .replace(/\bBGLs?\b/gi, ` ${bglEmoji} `)
+    .replace(/\bDLs?\b/gi, ` ${dlEmoji} `)
+    .replace(/\bWLs?\b/gi, ` ${wlEmoji} `)
+    .replace(/:nebulawl:/gi, wlEmoji)
+    .replace(/:dl:/gi, dlEmoji)
+    .replace(/:bgl:/gi, bglEmoji)
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -289,11 +405,19 @@ async function updateNebulaKey(key, username) {
 const ITEMS_PER_PAGE = 5;
 
 function createVendPageEmbed(query, data, page = 0) {
+  const digivendEmoji = getEmoji('digivend', '🏪');
+  const globeEmoji = getEmoji('globe', '🌍');
+  const clockEmoji = getEmoji('clock', '🕒');
+  const warnEmoji = getEmoji('warn', '⚠️');
+  const megaphoneEmoji = getEmoji('megaphone', '🔎');
+  const comboxEmoji = getEmoji('combox', '📦');
+  const wrenchEmoji = getEmoji('wrench', '🔧');
+
   if (!data || !data.success || !data.results || data.results.length === 0) {
     return new EmbedBuilder()
       .setColor(0xE74C3C)
-      .setTitle(`🏪 Nebula Vend Search: "${query}"`)
-      .setDescription('❌ No vending machines found selling this item.')
+      .setTitle(`${digivendEmoji} Nebula Vend Search: "${query}"`)
+      .setDescription(`${warnEmoji} **No vending machines found selling this item.**`)
       .setFooter({ text: 'Nebula Proxy Vend System' })
       .setTimestamp();
   }
@@ -309,20 +433,20 @@ function createVendPageEmbed(query, data, page = 0) {
 
   const embed = new EmbedBuilder()
     .setColor(0x5865F2)
-    .setTitle(`🏪 Nebula Vend Search Results`)
-    .setDescription(`🔎 **Item Query:** \`${query}\`\n📊 **Average Price:** ${avgPriceFormatted}\n📦 **Total Machines Found:** \`${count}\`\n───────────────────────────`)
+    .setTitle(`${digivendEmoji} Nebula Vend Search Results`)
+    .setDescription(`${megaphoneEmoji} **Item Query:** \`${query}\`\n📊 **Average Price:** ${avgPriceFormatted}\n${comboxEmoji} **Total Machines Found:** \`${count}\`\n───────────────────────────`)
     .setFooter({ text: `Page ${currentPage + 1} of ${totalPages} • Nebula Vend Explorer` })
     .setTimestamp();
 
   pageItems.forEach((item, idx) => {
     const globalIdx = startIndex + idx + 1;
     const priceStr = formatNebulaPrice(item.price_str || item.price);
-    const pos = (item.x !== undefined && item.y !== undefined) ? `(X: ${item.x}, Y: ${item.y})` : '';
-    const timeAgo = item.time_ago ? `• 🕒 ${item.time_ago}` : '';
+    const pos = (item.x !== undefined && item.y !== undefined) ? `${wrenchEmoji} \`(X: ${item.x}, Y: ${item.y})\`` : '';
+    const timeAgo = item.time_ago ? `• ${clockEmoji} ${item.time_ago}` : '';
 
     embed.addFields({
-      name: `${globalIdx}. 🌍 World: **${item.world}**`,
-      value: `📦 **Item:** ${item.item_name || query}\n💰 **Price:** **${priceStr}** ${pos} ${timeAgo}`,
+      name: `${globalIdx}. ${globeEmoji} World: **${item.world}**`,
+      value: `${digivendEmoji} **Item:** ${item.item_name || query}\n💰 **Price:** **${priceStr}** ${pos} ${timeAgo}`,
       inline: false
     });
   });
@@ -331,11 +455,18 @@ function createVendPageEmbed(query, data, page = 0) {
 }
 
 function createVendPaginationRow(currentPage, totalPages, customIdPrefix) {
+  const leftEmoji = getEmojiIdentifier('arrowleft', '◀');
+  const rightEmoji = getEmojiIdentifier('arrowright', '▶');
+
   const prevBtn = new ButtonBuilder()
     .setCustomId(`${customIdPrefix}_prev`)
-    .setLabel('◀ Previous')
+    .setLabel('Previous')
     .setStyle(ButtonStyle.Primary)
     .setDisabled(currentPage <= 0);
+
+  if (leftEmoji) {
+    prevBtn.setEmoji(leftEmoji);
+  }
 
   const pageIndicator = new ButtonBuilder()
     .setCustomId(`${customIdPrefix}_page`)
@@ -345,9 +476,13 @@ function createVendPaginationRow(currentPage, totalPages, customIdPrefix) {
 
   const nextBtn = new ButtonBuilder()
     .setCustomId(`${customIdPrefix}_next`)
-    .setLabel('Next ▶')
+    .setLabel('Next')
     .setStyle(ButtonStyle.Primary)
     .setDisabled(currentPage >= totalPages - 1);
+
+  if (rightEmoji) {
+    nextBtn.setEmoji(rightEmoji);
+  }
 
   return new ActionRowBuilder().addComponents(prevBtn, pageIndicator, nextBtn);
 }
@@ -548,7 +683,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (username.length < 3 || username.length > 24) {
       return interaction.editReply({ 
-        content: '❌ **Error:** Username must be between 3 and 24 characters long.' 
+        content: `${getEmoji('warn', '❌')} **Error:** Username must be between 3 and 24 characters long.` 
       });
     }
 
@@ -557,10 +692,10 @@ client.on('interactionCreate', async (interaction) => {
     if (res && res.success) {
       const embed = new EmbedBuilder()
         .setColor(0x2ECC71)
-        .setTitle('✅ Nebula License Key Updated')
+        .setTitle(`${getEmoji('checkmark', '✅')} Nebula License Key Updated`)
         .setDescription('Your license key has been successfully bound to your new username!')
         .addFields(
-          { name: '🔑 License Key', value: `\`||${key}||\``, inline: true },
+          { name: `${getEmoji('worldkey', '🔑')} License Key`, value: `\`||${key}||\``, inline: true },
           { name: '👤 Bound Username', value: `\`${username}\``, inline: true }
         )
         .setFooter({ text: 'Nebula Proxy Licensing System' })
@@ -571,7 +706,7 @@ client.on('interactionCreate', async (interaction) => {
       const errMsg = res?.message || 'Failed to update license key.';
       const embed = new EmbedBuilder()
         .setColor(0xE74C3C)
-        .setTitle('❌ Action Failed')
+        .setTitle(`${getEmoji('warn', '❌')} Action Failed`)
         .setDescription(`**Error:** ${errMsg}`)
         .setFooter({ text: 'Nebula Proxy Licensing System' })
         .setTimestamp();
@@ -585,7 +720,7 @@ client.on('interactionCreate', async (interaction) => {
     // Channel Restriction: Only allow in VENDFIND_CHANNEL_ID (1532358051342848183)
     if (VENDFIND_CHANNEL_ID && interaction.channelId !== VENDFIND_CHANNEL_ID) {
       return interaction.reply({
-        content: `❌ **Wrong Channel:** This command can only be used in <#${VENDFIND_CHANNEL_ID}>!`,
+        content: `${getEmoji('warn', '❌')} **Wrong Channel:** This command can only be used in <#${VENDFIND_CHANNEL_ID}>!`,
         flags: 64
       });
     }
@@ -662,13 +797,13 @@ client.on('messageCreate', async (message) => {
   if (content.toLowerCase().startsWith('!vend')) {
     // Channel Restriction: Only allow in VENDFIND_CHANNEL_ID (1532358051342848183)
     if (VENDFIND_CHANNEL_ID && message.channel.id !== VENDFIND_CHANNEL_ID) {
-      return message.reply(`❌ **Wrong Channel:** This command can only be used in <#${VENDFIND_CHANNEL_ID}>!`);
+      return message.reply(`${getEmoji('warn', '❌')} **Wrong Channel:** This command can only be used in <#${VENDFIND_CHANNEL_ID}>!`);
     }
 
     const itemQuery = content.slice(5).trim();
 
     if (!itemQuery) {
-      return message.reply('ℹ️ **Usage:** `!vend <item_name or ID>`\n*Example:* `!vend magplant` or `!vend dirt`');
+      return message.reply(`${getEmoji('info', 'ℹ️')} **Usage:** \`!vend <item_name or ID>\`\n*Example:* \`!vend magplant\` or \`!vend dirt\``);
     }
 
     try {
