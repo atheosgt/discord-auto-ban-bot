@@ -53,16 +53,16 @@ function formatNebulaPrice(priceInput) {
   if (priceInput === undefined || priceInput === null) return 'N/A';
   
   if (typeof priceInput === 'number') {
-    if (priceInput === 1 || priceInput === -1) return '1 <:nebulawl:1537932427400319167>';
-    if (priceInput > 1) return `${priceInput} <:nebulawl:1537932427400319167>`;
-    if (priceInput < -1) return `${-priceInput}/1 <:nebulawl:1537932427400319167>`;
+    if (priceInput === 1 || priceInput === -1) return '1 :nebulawl:';
+    if (priceInput > 1) return `${priceInput} :nebulawl:`;
+    if (priceInput < -1) return `${-priceInput}/1 :nebulawl:`;
     return 'Not Set';
   }
 
-  // String replacement (replace WL / WLs / wls with <:nebulawl:1537932427400319167>)
+  // String replacement (replace WL / WLs / wls with :nebulawl:)
   return String(priceInput)
-    .replace(/\bWLs\b/gi, '<:nebulawl:1537932427400319167>')
-    .replace(/\bWL\b/gi, '<:nebulawl:1537932427400319167>')
+    .replace(/\bWLs\b/gi, ':nebulawl:')
+    .replace(/\bWL\b/gi, ':nebulawl:')
     .trim();
 }
 
@@ -124,42 +124,53 @@ async function askGroqAI(prompt) {
   return 'Sorry, the AI service is currently unavailable. Please try again later.';
 }
 
-// --- NEBULA ONLINE USERS FETCHER ---
+// --- NEBULA STATS & VEND DATA FETCHER ---
 
 /**
- * Fetches online proxy users count from /online_users
+ * Fetches total tracked vending machines count from Nebula server
  */
-async function fetchNebulaOnlineUsers() {
+async function fetchTotalVendingMachines() {
+  // 1. Try /api/stats
   try {
-    const res = await fetch(`${NEBULA_SERVER_URL}/online_users`, {
+    const res = await fetch(`${NEBULA_SERVER_URL}/api/stats`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json, text/plain' },
+      headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(5000)
     });
 
     if (res.ok) {
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await res.json();
-        if (typeof data === 'number') return data;
-        if (Array.isArray(data)) return data.length;
-        if (data && typeof data === 'object') {
-          if (data.online_users !== undefined) return Number(data.online_users);
-          if (data.online !== undefined) return Number(data.online);
-          if (data.count !== undefined) return Number(data.count);
-          if (Array.isArray(data.users)) return data.users.length;
-          return Object.keys(data).length;
-        }
-      } else {
-        const text = await res.text();
-        const parsed = parseInt(text.trim(), 10);
-        if (!isNaN(parsed)) return parsed;
+      const data = await res.json();
+      if (data && data.stats && data.stats.totalVends !== undefined) {
+        return {
+          totalVends: data.stats.totalVends || 0,
+          totalWorlds: data.stats.totalWorlds || 0
+        };
       }
     }
-  } catch (err) {
-    // Silently continue if endpoint is not implemented yet
-  }
-  return 0;
+  } catch (e) {}
+
+  // 2. Fallback: calculate from /vend_data_secret
+  try {
+    const res = await fetch(`${NEBULA_SERVER_URL}/vend_data_secret`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000)
+    });
+
+    if (res.ok) {
+      const vendDb = await res.json();
+      let totalVends = 0;
+      const totalWorlds = Object.keys(vendDb).length;
+      for (const w in vendDb) {
+        if (vendDb[w] && Array.isArray(vendDb[w].items)) {
+          totalVends += vendDb[w].items.length;
+        }
+      }
+      return { totalVends, totalWorlds };
+    }
+  } catch (e) {}
+
+  return { totalVends: 0, totalWorlds: 0 };
 }
 
 // --- NEBULA API HELPERS ---
@@ -408,19 +419,19 @@ async function joinTargetVoiceChannel() {
 
 // --- PERIODIC STATS & PRESENCE UPDATER ---
 async function updateProxyStatsAndPresence() {
-  const onlineUsers = await fetchNebulaOnlineUsers();
+  const { totalVends, totalWorlds } = await fetchTotalVendingMachines();
 
   client.user.setPresence({
     activities: [
       {
-        name: `🟢 ${onlineUsers} Online | Nebula Proxy`,
+        name: `📦 ${totalVends.toLocaleString()} Vending Machines | Nebula`,
         type: ActivityType.Watching
       }
     ],
     status: 'online'
   });
 
-  console.log(`[Proxy Sync] Online Users from /online_users: ${onlineUsers}`);
+  console.log(`[Proxy Sync] Tracking ${totalVends} vending machines across ${totalWorlds} worlds.`);
 }
 
 // Register slash commands upon bot readiness
@@ -430,7 +441,7 @@ client.on('clientReady', async () => {
   // 1. Join voice channel if configured
   await joinTargetVoiceChannel();
 
-  // 2. Fetch online users & set presence immediately, then loop every 60s
+  // 2. Fetch vending machines count & set presence immediately, then loop every 60s
   await updateProxyStatsAndPresence();
   setInterval(updateProxyStatsAndPresence, 60000);
 
