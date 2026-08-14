@@ -25,15 +25,23 @@ try {
 
 // --- KEEP-ALIVE SERVER FOR RENDER / HOSTING ---
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3001;
 
 app.get('/', (req, res) => {
   res.send('Nebula Discord Bot & Proxy Sync System is active 24/7!');
 });
 
-app.listen(port, () => {
-  console.log(`[Web Server] Running on port ${port}`);
-});
+try {
+  app.listen(port, () => {
+    console.log(`[Web Server] Running on port ${port}`);
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[Web Server] Port ${port} is occupied, bot running in standalone mode.`);
+    } else {
+      console.error('[Web Server Error]:', err.message);
+    }
+  });
+} catch (e) {}
 
 // --- CONFIGURATION ---
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
@@ -42,7 +50,7 @@ const VENDFIND_CHANNEL_ID = process.env.VENDFIND_CHANNEL_ID || '1532358051342848
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-const NEBULA_SERVER_URL = (process.env.NEBULA_SERVER_URL || 'http://212.180.120.172:3000').replace(/\/$/, '');
+const NEBULA_SERVER_URL = (process.env.NEBULA_SERVER_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
 const NEBULA_OWNER_PASSWORD = process.env.NEBULA_OWNER_PASSWORD || 'nebula_owner_sec';
 
 // Role IDs
@@ -56,14 +64,14 @@ const ROLE_ID_2 = '1527450854209224835';
 // ============================================================================
 const EMOJIS = {
   // Para Birimleri (Currencies - WL / DL / BGL)
-  nebulawl: ':nebulawl:',                                           // Growtopia WL / Nebula WL
-  dl: '<:nebuladl:1527656071043481792>',                                                       // Diamond Lock
-  bgl: '<:nebulabgl:1527655551956160763>',                                                     // Blue Gem Lock
+  nebulawl: 'nebulawl',                                           // Growtopia WL / Nebula WL
+  dl: '<:nebuladl:1527656071043481792>',                          // Diamond Lock
+  bgl: '<:nebulabgl:1527655551956160763>',                        // Blue Gem Lock
 
   // Vend & Arama İkonları (Vend & Search Icons)
   digivend: '<:digivend:1537940298414432258>',                    // Vending Machine
-  globe: '<:nebulaglobe:1537943954417520750>',                                                 // Dünya / World ikonu (nebulaglobe)
-  combox: '<:nebulacombox:1537941208368943144>',                                               // Kutu / Stok / Toplam vend (nebulacombox)
+  globe: '<:nebulaglobe:1537943954417520750>',                    // Dünya / World ikonu (nebulaglobe)
+  combox: '<:nebulacombox:1537941208368943144>',                  // Kutu / Stok / Toplam vend (nebulacombox)
   wrench: '<:nebulawrench:1537945028045836298>',                  // İngiliz anahtarı / Koordinat
   clock: '<:nebulaclock:1537945353003859978>',                    // Saat / Zaman damgası
   megaphone: '<:nebulamegaphone:1537945029715169340>',            // Arama terimi / Duyuru
@@ -97,7 +105,7 @@ const EMOJIS = {
  * Resolves custom server emojis from the EMOJIS configuration, cache, or raw input.
  */
 function getEmoji(key, fallback = '') {
-  const val = (EMOJIS && EMOJIS[key]) ? EMOJIS[key] : key;
+  let val = (EMOJIS && EMOJIS[key]) ? EMOJIS[key] : key;
   if (!val) return fallback;
 
   // 1. If it's already a full custom Discord emoji string (<:name:123> or <a:name:123>)
@@ -114,19 +122,22 @@ function getEmoji(key, fallback = '') {
     return `<:_:${val.trim()}>`;
   }
 
-  // 3. Search client emoji cache by exact name or with nebula prefix
+  // Clean any leading/trailing colons
+  const cleanKey = String(val).trim().replace(/^:+|:+$/g, '');
+
+  // 3. Search client emoji cache by exact name or with/without nebula prefix
   if (client && client.emojis && client.emojis.cache) {
-    const rawVal = String(val).toLowerCase();
-    const cleanVal = rawVal.replace(/^nebula/, '');
+    const rawVal = cleanKey.toLowerCase();
+    const withoutNebula = rawVal.replace(/^nebula/, '');
     const found = client.emojis.cache.find(e => {
       const eName = e.name.toLowerCase();
-      return eName === rawVal || eName === `nebula${cleanVal}` || eName === cleanVal;
+      return eName === rawVal || eName === `nebula${withoutNebula}` || eName === withoutNebula;
     });
     if (found) return found.toString();
   }
 
-  // 4. Fallback
-  return fallback || `:${val}:`;
+  // 4. Return standard emoji wrapper
+  return `:${cleanKey}:` || fallback;
 }
 
 function getEmojiIdentifier(key, fallback = null) {
@@ -144,11 +155,12 @@ function getEmojiIdentifier(key, fallback = null) {
 
   // 3. Search client emoji cache by name
   if (client && client.emojis && client.emojis.cache) {
-    const rawVal = String(val).toLowerCase();
-    const cleanVal = rawVal.replace(/^nebula/, '');
+    const cleanKey = String(val).trim().replace(/^:+|:+$/g, '');
+    const rawVal = cleanKey.toLowerCase();
+    const withoutNebula = rawVal.replace(/^nebula/, '');
     const found = client.emojis.cache.find(e => {
       const eName = e.name.toLowerCase();
-      return eName === rawVal || eName === `nebula${cleanVal}` || eName === cleanVal;
+      return eName === rawVal || eName === `nebula${withoutNebula}` || eName === withoutNebula;
     });
     if (found) return found.id;
   }
