@@ -38,14 +38,15 @@ app.listen(port, () => {
 // --- CONFIGURATION ---
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID;
 const VOICE_CHANNEL_ID = process.env.VOICE_CHANNEL_ID || process.env.VOICE_CHANNEL;
+const VENDFIND_CHANNEL_ID = process.env.VENDFIND_CHANNEL_ID || '1532358051342848183';
 const BOT_TOKEN = process.env.DISCORD_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY;
 const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const NEBULA_SERVER_URL = (process.env.NEBULA_SERVER_URL || 'http://212.180.120.172:3000').replace(/\/$/, '');
 const NEBULA_OWNER_PASSWORD = process.env.NEBULA_OWNER_PASSWORD || 'nebula_owner_sec';
 
-// Role IDs to assign with /give command
-const ROLE_ID_1 = '1527450826698920026';
+// Role IDs
+const ROLE_ID_1 = '1527450826698920026'; // Required role for /key and assigned by /give
 const ROLE_ID_2 = '1527450854209224835';
 
 // --- PRICE & EMOJI FORMATTER ---
@@ -53,16 +54,16 @@ function formatNebulaPrice(priceInput) {
   if (priceInput === undefined || priceInput === null) return 'N/A';
   
   if (typeof priceInput === 'number') {
-    if (priceInput === 1 || priceInput === -1) return '1 <:nebulawl:1537932427400319167>';
-    if (priceInput > 1) return `${priceInput} <:nebulawl:1537932427400319167>`;
-    if (priceInput < -1) return `${-priceInput}/1 <:nebulawl:1537932427400319167>`;
+    if (priceInput === 1 || priceInput === -1) return '1 :nebulawl:';
+    if (priceInput > 1) return `${priceInput} :nebulawl:`;
+    if (priceInput < -1) return `${-priceInput}/1 :nebulawl:`;
     return 'Not Set';
   }
 
-  // String replacement (replace WL / WLs / wls with <:nebulawl:1537932427400319167>)
+  // String replacement (replace WL / WLs / wls with :nebulawl:)
   return String(priceInput)
-    .replace(/\bWLs\b/gi, '<:nebulawl:1537932427400319167>')
-    .replace(/\bWL\b/gi, '<:nebulawl:1537932427400319167>')
+    .replace(/\bWLs\b/gi, ':nebulawl:')
+    .replace(/\bWL\b/gi, ':nebulawl:')
     .trim();
 }
 
@@ -447,7 +448,6 @@ async function updateProxyStatsAndPresence() {
       ? `📦 ${countToDisplay.toLocaleString()} Vending Machines | Nebula` 
       : '📦 Scanning Vending Machines | Nebula';
 
-    // Force set activity and online status consistently
     client.user.setPresence({
       status: 'online',
       activities: [
@@ -464,16 +464,16 @@ async function updateProxyStatsAndPresence() {
   }
 }
 
-// Re-assert presence on ready and shard events
+// Register slash commands upon bot readiness
 client.on('clientReady', async () => {
   console.log(`[Bot Ready] Logged in as ${client.user.tag}`);
 
   // 1. Join voice channel if configured
   await joinTargetVoiceChannel();
 
-  // 2. Fetch and set presence immediately, then keep it alive every 25 seconds
+  // 2. Fetch and set presence immediately, then update every 10 seconds
   await updateProxyStatsAndPresence();
-  setInterval(updateProxyStatsAndPresence, 25000);
+  setInterval(updateProxyStatsAndPresence, 10000);
 
   // 3. Register Slash Commands
   if (!BOT_TOKEN) {
@@ -524,8 +524,22 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // 2. /key COMMAND (Key & Username Bind/Change)
+  // 2. /key COMMAND (Key & Username Bind/Change with Role Restriction)
   if (interaction.commandName === 'key') {
+    // Check if the user has the required role (ROLE_ID_1: 1527450826698920026)
+    const member = interaction.member;
+    const hasRequiredRole = member && (
+      (member.roles?.cache && member.roles.cache.has(ROLE_ID_1)) ||
+      (Array.isArray(member.roles) && member.roles.includes(ROLE_ID_1))
+    );
+
+    if (!hasRequiredRole) {
+      return interaction.reply({
+        content: `❌ **Access Denied:** You must have the <@&${ROLE_ID_1}> role to use the \`/key\` command.`,
+        flags: 64
+      });
+    }
+
     // Ephemeral reply so license keys are never leaked to the channel
     await interaction.deferReply({ flags: 64 });
 
@@ -566,8 +580,16 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // 3. /vend COMMAND (Paginated Vend Search)
+  // 3. /vend COMMAND (Paginated Vend Search with Channel Restriction)
   if (interaction.commandName === 'vend') {
+    // Channel Restriction: Only allow in VENDFIND_CHANNEL_ID (1532358051342848183)
+    if (VENDFIND_CHANNEL_ID && interaction.channelId !== VENDFIND_CHANNEL_ID) {
+      return interaction.reply({
+        content: `❌ **Wrong Channel:** This command can only be used in <#${VENDFIND_CHANNEL_ID}>!`,
+        flags: 64
+      });
+    }
+
     await interaction.deferReply();
     const itemQuery = interaction.options.getString('item').trim();
 
@@ -636,8 +658,13 @@ client.on('messageCreate', async (message) => {
 
   const content = message.content.trim();
 
-  // 2. !vend <item_name> COMMAND (Paginated)
+  // 2. !vend <item_name> COMMAND (Channel Restricted & Paginated)
   if (content.toLowerCase().startsWith('!vend')) {
+    // Channel Restriction: Only allow in VENDFIND_CHANNEL_ID (1532358051342848183)
+    if (VENDFIND_CHANNEL_ID && message.channel.id !== VENDFIND_CHANNEL_ID) {
+      return message.reply(`❌ **Wrong Channel:** This command can only be used in <#${VENDFIND_CHANNEL_ID}>!`);
+    }
+
     const itemQuery = content.slice(5).trim();
 
     if (!itemQuery) {
