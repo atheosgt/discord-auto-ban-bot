@@ -56,7 +56,7 @@ const ROLE_ID_2 = '1527450854209224835';
 // ============================================================================
 const EMOJIS = {
   // Para Birimleri (Currencies - WL / DL / BGL)
-  nebulawl: '<:nebulawl:1537932427400319167>',                                           // Growtopia WL / Nebula WL
+  nebulawl: ':nebulawl:',                                           // Growtopia WL / Nebula WL
   dl: '<:nebuladl:1527656071043481792>',                                                       // Diamond Lock
   bgl: '<:nebulabgl:1527655551956160763>',                                                     // Blue Gem Lock
 
