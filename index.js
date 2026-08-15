@@ -53,6 +53,16 @@ const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const NEBULA_SERVER_URL = (process.env.NEBULA_SERVER_URL || 'http://212.180.120.172:3000').replace(/\/$/, '');
 const NEBULA_OWNER_PASSWORD = process.env.NEBULA_OWNER_PASSWORD || 'nebula_owner_sec';
 
+// --- KEYAUTH CONFIGURATION (Extracted from Nebula Proxy) ---
+const KEYAUTH = {
+  name: process.env.KEYAUTH_NAME || 'Nebula',
+  ownerid: process.env.KEYAUTH_OWNERID || '9JeMz0DVa0',
+  secret: process.env.KEYAUTH_SECRET || '88ef90c6f4eb428f5083fc6662a9bdd5ec913e0e7f1fec93f374d7ba243bd3e0',
+  version: process.env.KEYAUTH_VERSION || '1.0',
+  url: process.env.KEYAUTH_URL || 'https://keyauth.win/api/1.2/',
+  sellerKey: process.env.KEYAUTH_SELLER_KEY || ''
+};
+
 // Role IDs
 const ROLE_ID_1 = '1527450826698920026'; // Required role for /key and assigned by /give
 const ROLE_ID_2 = '1527450854209224835';
@@ -343,29 +353,34 @@ async function searchNebulaVends(query) {
 }
 
 /**
- * Updates or binds username to a given original license key
+ * Updates or binds username to a given original license key (Synced with KeyAuth & Nebula Proxy Server)
  */
 async function updateNebulaKey(key, username) {
   const cleanKey = key.trim();
   const cleanUser = username.trim();
 
-  // 1. Try modern /api/set_username endpoint
-  try {
-    const res = await fetch(`${NEBULA_SERVER_URL}/api/set_username`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: cleanKey, username: cleanUser }),
-      signal: AbortSignal.timeout(5000)
-    });
-
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (e) {
-    // Fallback to legacy endpoints below
+  if (!cleanKey || cleanKey.length < 3) {
+    return { success: false, message: 'Please provide a valid license key.' };
   }
 
-  // 2. Fallback: check key, unbind existing username if needed, then bind
+  // 1. Optional KeyAuth Seller validation if seller key is configured
+  if (KEYAUTH.sellerKey) {
+    try {
+      const sellerRes = await fetch(`https://keyauth.win/api/seller/?sellerkey=${encodeURIComponent(KEYAUTH.sellerKey)}&type=verify&key=${encodeURIComponent(cleanKey)}`, {
+        signal: AbortSignal.timeout(6000)
+      });
+      if (sellerRes.ok) {
+        const sellerData = await sellerRes.json();
+        if (sellerData.success === false || sellerData.status === 'failed') {
+          return { success: false, message: sellerData.message || 'Invalid or expired KeyAuth license key!' };
+        }
+      }
+    } catch (e) {
+      console.warn('[KeyAuth Seller Check Error]:', e.message);
+    }
+  }
+
+  // 2. Check if this username is already bound to another key in Nebula Server database
   try {
     const keysRes = await fetch(`${NEBULA_SERVER_URL}/key_data_secret`, {
       method: 'GET',
@@ -375,26 +390,30 @@ async function updateNebulaKey(key, username) {
 
     if (keysRes.ok) {
       const allKeys = await keysRes.json();
-      if (!allKeys || !allKeys[cleanKey]) {
-        return { success: false, message: 'This license key does not exist in the database!' };
-      }
-
-      for (const k in allKeys) {
-        if (k !== cleanKey && allKeys[k].username && allKeys[k].username.toLowerCase() === cleanUser.toLowerCase()) {
-          return { success: false, message: 'This username is already linked to another license key!' };
+      if (allKeys && typeof allKeys === 'object') {
+        for (const k in allKeys) {
+          if (k.toLowerCase() !== cleanKey.toLowerCase() && allKeys[k].username && allKeys[k].username.toLowerCase() === cleanUser.toLowerCase()) {
+            return { success: false, message: `The username "${cleanUser}" is already linked to another license key!` };
+          }
         }
       }
     }
+  } catch (e) {
+    console.warn('[Key Check Warn]:', e.message);
+  }
 
-    // Unbind existing user
+  // 3. Unbind existing key association in case of key update/re-binding
+  try {
     await fetch(`${NEBULA_SERVER_URL}/api/unbind`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: cleanKey, password: NEBULA_OWNER_PASSWORD }),
       signal: AbortSignal.timeout(5000)
     });
+  } catch (e) {}
 
-    // Bind new username
+  // 4. Bind new username to key on Nebula Proxy Server database
+  try {
     const bindRes = await fetch(`${NEBULA_SERVER_URL}/api/bind`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -403,10 +422,15 @@ async function updateNebulaKey(key, username) {
     });
 
     if (bindRes.ok) {
-      return await bindRes.json();
+      const bindData = await bindRes.json();
+      if (bindData.success) {
+        return { success: true, message: 'License key successfully bound to username!' };
+      } else {
+        return { success: false, message: bindData.message || 'Failed to bind username to key.' };
+      }
     }
 
-    return { success: false, message: 'Failed to update username for this license key.' };
+    return { success: false, message: `Nebula server returned HTTP ${bindRes.status}` };
   } catch (err) {
     console.error('[Key Update Error]:', err.message);
     return { success: false, message: `Server connection error: ${err.message}` };
